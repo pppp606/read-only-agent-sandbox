@@ -1,0 +1,23 @@
+name: Host-side unit tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Unit tests (no real sandbox)
+        run: python -m unittest discover -s tests -v
+      - name: Gate must reject incomplete evidence
+        run: |
+          if python host/check_gates.py evidence.example.json; then
+            echo "ERROR: incomplete evidence unexpectedly accepted"
+            exit 1
+          fi
