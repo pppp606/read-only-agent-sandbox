@@ -1,0 +1,10 @@
+{
+  "G0_versions": {"status": "pending", "evidence": ""},
+  "G1_oauth_guest_root": {"status": "pending", "evidence": ""},
+  "G2_egress_guest_root": {"status": "pending", "evidence": ""},
+  "G3_host_integrity": {"status": "pending", "evidence": ""},
+  "G4_agent_permissions": {"status": "pending", "evidence": ""},
+  "G5_negative_network": {"status": "pending", "evidence": ""},
+  "G5_proxy_down": {"status": "pending", "evidence": ""},
+  "G5_ipv6_lan_dns": {"status": "pending", "evidence": ""}
+}
