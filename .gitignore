@@ -1,0 +1,11 @@
+# Never commit review inputs, credentials, or test artifacts
+review-input/
+review-output/
+evidence/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+.claude/
