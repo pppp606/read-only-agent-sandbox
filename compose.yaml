@@ -1,0 +1,14 @@
+services:
+  egress-proxy:
+    build: ./proxy
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 128m
+    ports:
+      - "127.0.0.1:3128:3128"
+    environment:
+      ALLOWED_HOSTS: "api.anthropic.com"
+    restart: "no"
