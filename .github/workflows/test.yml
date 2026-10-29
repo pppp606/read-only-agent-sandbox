@@ -10,7 +10,9 @@ jobs:
     timeout-minutes: 5
     strategy:
       matrix:
-        python-version: ["3.9", "3.13"]
+        # Oldest version available on current ubuntu-latest runners plus the version
+        # the proxy image uses. The code itself still runs on the host's Python 3.9.
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
