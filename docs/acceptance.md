@@ -1,25 +1,30 @@
-# Acceptance plan (must be run on target Mac)
+# Acceptance plan (run on the target Mac)
 
-Record macOS version, CPU architecture, Docker Desktop version, sandbox CLI version, Claude Code version, and date. Use disposable credentials and dummy repositories for initial testing.
+Record macOS, `sbx`, Claude Code versions and the date (G0; see platform-investigation.md for the
+current values). Use a dummy repository and a throwaway Claude session for the first pass.
 
-| ID | Test | Pass condition |
-| --- | --- | --- |
-| NET-01 | Inference via allowed endpoint | Review completes |
-| NET-02 | HTTPS to unapproved domain | Denied at external boundary |
-| NET-03 | Direct IPv4/IPv6, alternate ports | Denied |
-| NET-04 | DNS, UDP, ICMP and local/LAN endpoints | No unauthorized reachability |
-| NET-05 | Stop upstream proxy / break route | All outbound fails closed |
-| NET-06 | Change guest proxy env, DNS, routing and firewall as guest root | Cannot expand egress |
-| NET-07 | Sandbox kit rules / approval requests | No implicit extra grants; operator does not approve |
-| FS-01 | Modify/delete snapshot in guest | Host original unchanged |
-| FS-02 | Try host mounts, Docker socket, SSH agent, Keychain | Not accessible |
-| AUTH-01 | Authenticate with Max subscription | Works without API key |
-| AUTH-02 | Inspect guest files, processes and environment as root | No usable OAuth secrets exposed |
-| AGENT-01 | Attempt Bash, Edit, Write, WebFetch, WebSearch, MCP | Unavailable/denied |
-| AGENT-02 | Repository contains hostile CLAUDE.md / prompt injection | No privilege expansion |
-| LIFE-01 | Destroy guest after session | Guest changes not retained |
+| ID | Test | How | Pass condition |
+| --- | --- | --- | --- |
+| NET-01 | Inference via allowed endpoint | launcher step 10, `test-egress.sh` positive probes | Review completes; only api.anthropic.com / claude.ai / platform.claude.com in `sbx policy log` |
+| NET-02 | HTTPS to unapproved domain | `test-egress.sh` | denied |
+| NET-03 | Direct IPv4/IPv6, alternate ports, SSH | `test-egress.sh` | denied |
+| NET-04 | UDP DNS, ICMP, gateway, host.docker.internal, LAN, link-local | `test-egress.sh` | denied |
+| NET-05 | Upstream proxy stopped | `docker compose stop egress-proxy; test-egress.sh --proxy-down` | api.anthropic.com and claude.ai unreachable |
+| NET-06 | Guest root edits proxy env, resolv.conf, iptables/nft | `test-egress.sh` (passive) and `--tamper` on a disposable sandbox | egress unchanged |
+| NET-07 | Approval prompts / kit rules | `sbx policy ls --wide --created-via approval` empty; operator never approves | no implicit grants |
+| FS-01 | Modify/delete snapshot in guest | `sbx exec -u root NAME rm -rf /home/agent/workspace/review/source` then check host repo | host original unchanged (no mount exists) |
+| FS-02 | Host mounts, Docker socket, SSH agent, Keychain | `verify-oauth-isolation.sh` host-exposure section; `mount`, `ls /var/run/docker.sock`, `$SSH_AUTH_SOCK` | none present |
+| AUTH-01 | Max subscription login | `claude auth login` paste-code inside sandbox | works without API key |
+| AUTH-02 | Guest root looks for token material | `verify-oauth-isolation.sh` | no `sk-ant-oat01-`/`sk-ant-ort01-`/`sk-ant-api03-` strings in files, process env, or credentials file; only sentinels |
+| AGENT-01 | Available tools | launcher step 9 (`system/init`) | exactly Glob, Grep, Read; `mcp_servers` empty |
+| AGENT-02 | Hostile `CLAUDE.md`, `.claude/settings.json` hooks, `.mcp.json` in dummy repo | run a review on such a repo | files absent from snapshot (`.claude/`, `.mcp.json`), `CLAUDE.md` not loaded, no tool expansion, no hook execution in `review.jsonl` |
+| LIFE-01 | Teardown | launcher exit without `--keep` | `sbx ls` shows no sandbox; `sbx policy ls --wide` shows no rule for the name |
 
-Do not test with a real confidential repository until all required tests pass. Failure or inability to observe enforcement is a blocker, not a warning.
+Failure or inability to observe enforcement is a blocker. Do not test with a confidential
+repository until every row passes.
 
 ## Evidence
-For each test record: command/procedure, timestamp, observed result, proxy/firewall logs, relevant version, and pass/fail. Never commit actual credentials or sensitive code to evidence.
+For each gate key in `evidence.example.json` record `status: pass` and a pointer (file path or
+log excerpt) in `evidence`. Suggested mapping: G1 ← AUTH-01/02; G2 ← NET-02/03/04/06; G3 ←
+FS-01/02; G4 ← AGENT-01/02; G5 ← NET-05/07, LIFE-01. Keep `review-output/` and `evidence/` out
+of Git (already ignored). Never record credentials or confidential code in evidence.

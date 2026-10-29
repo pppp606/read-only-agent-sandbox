@@ -10,5 +10,6 @@ services:
     ports:
       - "127.0.0.1:3128:3128"
     environment:
-      ALLOWED_HOSTS: "api.anthropic.com"
+      # Inference + claude.ai subscription login/token refresh. Nothing else.
+      ALLOWED_HOSTS: "api.anthropic.com,claude.ai,platform.claude.com"
     restart: "no"

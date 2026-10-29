@@ -8,11 +8,14 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
       - name: Unit tests (no real sandbox)
         run: python -m unittest discover -s tests -v
       - name: Gate must reject incomplete evidence
@@ -21,3 +24,8 @@ jobs:
             echo "ERROR: incomplete evidence unexpectedly accepted"
             exit 1
           fi
+      - name: Shell syntax
+        run: |
+          for f in scripts/*.sh; do sh -n "$f"; done
+          bash -n host/launch_review.sh
+          bash host/launch_review.sh --help >/dev/null

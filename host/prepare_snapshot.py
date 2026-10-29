@@ -13,7 +13,9 @@ MAX_TOTAL = 32 * 1024 * 1024
 MAX_HISTORY = 2 * 1024 * 1024
 BLOCKED_PARTS = {".git", ".env", ".ssh", ".aws", ".gnupg", ".claude", "node_modules", ".next", "dist", "build", "coverage", ".venv", "vendor"}
 BLOCKED_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".sqlite", ".db"}
-BLOCKED_NAMES = {"id_rsa", "id_ed25519", ".npmrc", ".netrc", "credentials", "credentials.json", "secrets.json"}
+# .mcp.json and .claude/ are agent extension points: a hostile repository could use
+# them to register MCP servers or hooks, so they never reach the guest.
+BLOCKED_NAMES = {"id_rsa", "id_ed25519", ".npmrc", ".netrc", "credentials", "credentials.json", "secrets.json", ".mcp.json"}
 SECRET_PATTERNS = [re.compile(x, re.I) for x in (
     r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----",
     r"AKIA[0-9A-Z]{16}",
@@ -21,15 +23,20 @@ SECRET_PATTERNS = [re.compile(x, re.I) for x in (
     r"sk-ant-[A-Za-z0-9_-]{16,}",
 )]
 def git(root, *args):
-    return subprocess.run(["git", "-C", str(root), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True).stdout
+    try:
+        return subprocess.run(["git", "-C", str(root), *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True).stdout
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f"git {args[0]} failed: {exc.stderr.decode('utf-8', 'replace').strip()}") from exc
 
 def allowed(path):
     return not (set(path.parts) & BLOCKED_PARTS or path.name in BLOCKED_NAMES or path.suffix.lower() in BLOCKED_SUFFIXES or path.name.startswith(".env"))
 
 def prepare(root, output, history_count):
     root = root.resolve(strict=True)
-    output = output.absolute()
-    if output.exists():
+    # Resolve the parent (which must exist) so symlinked temp dirs such as
+    # macOS /var -> /private/var compare correctly against the resolved root.
+    output = output.parent.resolve(strict=True) / output.name
+    if output.exists() or output.is_symlink():
         raise ValueError("Destination must not exist")
     if output == root or root in output.parents:
         raise ValueError("Destination must be outside source repository")
@@ -56,7 +63,7 @@ def prepare(root, output, history_count):
             raise ValueError("Snapshot exceeds size budget")
         staged.append((relative, data))
     # Git log is intentionally metadata-only: full diffs can leak removed secrets.
-    log = git(root, "log", f"-{history_count}", "--format=%H %aI %s", "--no-show-signature")
+    log = git(root, "log", f"-{history_count}", "--format=%H %aI %s", "--no-show-signature") if history_count else b""
     if len(log) > MAX_HISTORY:
         raise ValueError("History exceeds size budget")
     with tempfile.TemporaryDirectory(prefix="roas-stage-", dir=str(output.parent)) as tmp:

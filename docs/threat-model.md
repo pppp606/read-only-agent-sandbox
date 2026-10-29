@@ -20,7 +20,7 @@ macOS host, virtualization monitor, external egress policy enforcement, credenti
 8. Session is disposable; no persistence of untrusted modifications across reviews.
 
 ## Residual risks
-Hypervisor escapes, host/proxy bugs, covert channels via allowed Anthropic traffic, sensitive source transmitted to Anthropic as part of normal inference, malicious prompt injection affecting review output, and incorrect snapshot filtering. The model's instructions are not a security boundary.
+Hypervisor escapes, host/proxy bugs (including the Docker Sandboxes daemon and its credential sentinel mechanism, which are in the trusted computing base), covert channels via allowed Anthropic traffic (a guest can use the sentinel to send what it can read to Anthropic), sensitive source transmitted to Anthropic as part of normal inference, malicious prompt injection affecting review output, and incorrect snapshot filtering. The model's instructions are not a security boundary.
 
 ## Out of scope
 Executing reviewed code, installing dependencies, dynamic vulnerability verification, automatically applying fixes, or automatically approving network requests.

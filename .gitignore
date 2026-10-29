@@ -9,3 +9,4 @@ evidence/
 *.key
 *.p12
 .claude/
+__pycache__/
