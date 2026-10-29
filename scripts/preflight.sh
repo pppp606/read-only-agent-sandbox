@@ -19,8 +19,11 @@ sbx version
 command -v claude >/dev/null 2>&1 && claude --version || say "note: host claude not found (only needed for comparison)"
 command -v docker >/dev/null 2>&1 && docker --version || say "note: docker not found (needed only for the compose egress proxy)"
 
-say "== Daemon =="
+say "== Daemon and sign-in =="
 sbx daemon status || bad "sbx daemon not healthy"
+if sbx diagnose 2>/dev/null | grep -q 'Authentication.*not signed in'; then
+  bad "not signed in to Docker (run: sbx login). Policy checks below cannot be evaluated until then."
+fi
 
 say "== Settings that must hold during a review =="
 check_setting() {
@@ -47,11 +50,20 @@ if [ -n "$proxy" ] && [ "$proxy" != "-" ]; then
 fi
 
 say "== Network policy =="
-if ! sbx policy ls --wide 2>/dev/null; then
-  bad "global network policy not initialized (run: sbx policy init deny-all)"
-fi
+pol=$(sbx policy ls --wide 2>&1) || true
+case "$pol" in
+  *"not signed in"*) bad "cannot read policy: not signed in" ;;
+  *"not been initialized"*) bad "global network policy not initialized (run: sbx policy init deny-all)" ;;
+  *) say "$pol" ;;
+esac
+# Fail closed: a target counts as denied only if the daemon explicitly says so.
 for target in example.com 1.1.1.1 registry.npmjs.org github.com; do
-  if sbx policy check network "$target" 2>/dev/null | grep -qi allow; then bad "policy allows $target"; else say "ok   policy denies $target"; fi
+  out=$(sbx policy check network "$target" 2>&1 || true)
+  case "$out" in
+    *[Aa]llow*) bad "policy allows $target" ;;
+    *[Dd]en*|*[Bb]lock*) say "ok   policy denies $target" ;;
+    *) bad "could not evaluate policy for $target: $(printf '%s' "$out" | head -1)" ;;
+  esac
 done
 say "note: api.anthropic.com / claude.ai / platform.claude.com are allowed per sandbox by host/launch_review.sh, not globally."
 
