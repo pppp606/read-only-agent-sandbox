@@ -45,8 +45,9 @@ noproxy=$(sbx settings get no_proxy.sandbox 2>/dev/null | tr -d '[:space:]')
 
 say "== Upstream proxy reachability (expects 403 for a non-allowlisted host) =="
 if [ -n "$proxy" ] && [ "$proxy" != "-" ]; then
-  code=$(curl -sS -o /dev/null -m 8 -w '%{http_code}' -x "$proxy" https://example.com/ 2>/dev/null || true)
-  if [ "$code" = "403" ]; then say "ok   proxy denies example.com (403)"; else bad "proxy returned '$code' for example.com (want 403; is 'docker compose up' running?)"; fi
+  # %{http_connect} is the proxy's CONNECT response; %{http_code} stays 000 when the tunnel is refused.
+  code=$(curl -sS -o /dev/null -m 8 -w '%{http_connect}' -x "$proxy" https://example.com/ 2>/dev/null || true)
+  if [ "$code" = "403" ]; then say "ok   proxy denies example.com (CONNECT 403)"; else bad "proxy CONNECT returned '$code' for example.com (want 403; is the egress proxy running?)"; fi
 fi
 
 say "== Network policy =="
@@ -58,10 +59,10 @@ case "$pol" in
 esac
 # Fail closed: a target counts as denied only if the daemon explicitly says so.
 for target in example.com 1.1.1.1 registry.npmjs.org github.com; do
-  out=$(sbx policy check network "$target" 2>&1 || true)
+  out=$(sbx policy check network --json "$target" 2>&1 || true)
   case "$out" in
-    *[Aa]llow*) bad "policy allows $target" ;;
-    *[Dd]en*|*[Bb]lock*) say "ok   policy denies $target" ;;
+    *'"allowed": true'*) bad "policy allows $target" ;;
+    *'"allowed": false'*) say "ok   policy denies $target" ;;
     *) bad "could not evaluate policy for $target: $(printf '%s' "$out" | head -1)" ;;
   esac
 done

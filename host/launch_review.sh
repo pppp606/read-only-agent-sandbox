@@ -89,10 +89,11 @@ trap cleanup EXIT
 
 # ---- 5. per-sandbox network allow rules on top of the global deny-all -------
 sbx policy allow network --sandbox "$NAME" "$ALLOW_HOSTS"
+policy_allows() { sbx policy check network --json --sandbox "$NAME" "$1" 2>/dev/null | grep -q '"allowed": true'; }
 for t in example.com github.com 1.1.1.1; do
-  sbx policy check network --sandbox "$NAME" "$t" | grep -qi allow && die "policy for $NAME allows $t"
+  policy_allows "$t" && die "policy for $NAME allows $t"
 done
-sbx policy check network --sandbox "$NAME" api.anthropic.com:443 | grep -qi allow || die "policy does not allow api.anthropic.com for $NAME"
+policy_allows api.anthropic.com:443 || die "policy does not allow api.anthropic.com for $NAME"
 
 # ---- 6. copy snapshot in; nothing else crosses the boundary -----------------
 sbx cp "$SNAP" "$NAME:$GUEST_REVIEW"
