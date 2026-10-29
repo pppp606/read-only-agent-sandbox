@@ -16,6 +16,10 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 REPO=""; EVIDENCE=""; NAME="roas-$(date +%Y%m%d-%H%M%S)"; HISTORY=50; PROMPT=""; OUT="$HERE/review-output"
 PROBE_MODE=0; KEEP=0
 ALLOW_HOSTS="api.anthropic.com:443,claude.ai:443,platform.claude.com:443"
+# The Docker claude kit provisions its own sandbox-scoped allow rules (observed on sbx 0.50.1:
+# api.anthropic.com, bridge.claudeusercontent.com, claude.com, code.claude.com, downloads.claude.ai,
+# mcp-proxy.anthropic.com, platform.claude.com). Deny beats allow, so we explicitly deny the extras.
+DENY_HOSTS="mcp-proxy.anthropic.com:443,downloads.claude.ai:443,code.claude.com:443,bridge.claudeusercontent.com:443,claude.com:443"
 GUEST_WS=/home/agent/workspace
 GUEST_REVIEW="$GUEST_WS/review"
 
@@ -83,15 +87,20 @@ cleanup() {
   log "destroying sandbox $NAME"
   sbx rm --force "$NAME" >/dev/null 2>&1 || true
   # Remove per-sandbox allow rules so they cannot be inherited by a future sandbox of the same name.
-  for h in ${ALLOW_HOSTS//,/ }; do sbx policy rm network -f --sandbox "$NAME" --resource "$h" >/dev/null 2>&1 || true; done
+  for h in ${ALLOW_HOSTS//,/ } ${DENY_HOSTS//,/ }; do sbx policy rm network -f --sandbox "$NAME" --resource "$h" >/dev/null 2>&1 || true; done
 }
 trap cleanup EXIT
 
 # ---- 5. per-sandbox network allow rules on top of the global deny-all -------
 sbx policy allow network --sandbox "$NAME" "$ALLOW_HOSTS"
+sbx policy deny network --sandbox "$NAME" "$DENY_HOSTS"
 policy_allows() { sbx policy check network --json --sandbox "$NAME" "$1" 2>/dev/null | grep -q '"allowed": true'; }
-for t in example.com github.com 1.1.1.1; do
+for t in example.com github.com 1.1.1.1 mcp-proxy.anthropic.com:443 downloads.claude.ai:443 claude.com:443; do
   policy_allows "$t" && die "policy for $NAME allows $t"
+done
+# Any kit-provisioned allow rule outside our list is a finding (NET-07).
+sbx policy ls "$NAME" --wide --source kit 2>/dev/null | grep -oE '[a-z0-9.-]+\.[a-z]+:[0-9]+' | sort -u | while read -r r; do
+  case ",$ALLOW_HOSTS,$DENY_HOSTS," in *",$r,"*) ;; *) die "kit provisioned an unexpected allow rule: $r" ;; esac
 done
 policy_allows api.anthropic.com:443 || die "policy does not allow api.anthropic.com for $NAME"
 

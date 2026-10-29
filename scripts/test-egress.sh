@@ -16,9 +16,17 @@ failures=0
 run_in() { sbx exec -u root "$SANDBOX" sh -c "$1"; }
 
 # probe LABEL EXPECT(allow|deny) SHELL_COMMAND
+# Docker's forward proxy answers a blocked CONNECT with 200 and then serves its own
+# plaintext 403 ("Approval required for host:port"). curl exits 0 on that, so a probe
+# counts as "allow" only if the command succeeds AND the output is not that block page.
 probe() {
   label="$1"; expected="$2"; cmd="$3"
-  if run_in "$cmd" >/dev/null 2>&1; then result=allow; else result=deny; fi
+  out=$(run_in "$cmd 2>/dev/null; echo \"__rc=\$?\"" 2>/dev/null)
+  rc=$(printf '%s' "$out" | sed -n 's/.*__rc=\([0-9]*\).*/\1/p' | tail -1)
+  case "$out" in
+    *"Approval required for"*|*"blocked by proxy policy"*|*"No matching allow rule"*) result=deny ;;
+    *) if [ "${rc:-1}" = 0 ]; then result=allow; else result=deny; fi ;;
+  esac
   if [ "$result" = "$expected" ]; then
     echo "PASS $label ($result)"
   else
@@ -30,7 +38,7 @@ probe() {
 # curl exits non-zero on connection failure/timeout; -f additionally fails on HTTP>=400.
 # For "deny" probes we do NOT use -f: a 403 from a proxy is still a reachable endpoint
 # from the point of view of data exfiltration, so any HTTP response counts as allow.
-C='curl --max-time 8 -sS -o /dev/null'
+C='curl --max-time 8 -sS -o -'
 
 echo "== Sandbox: $SANDBOX  mode: $MODE =="
 run_in 'id; cat /etc/os-release 2>/dev/null | head -2; ip -4 route 2>/dev/null; ip -6 route 2>/dev/null | head -3; env | grep -i proxy || echo "(no proxy env)"' || { echo "cannot exec in sandbox" >&2; exit 2; }
