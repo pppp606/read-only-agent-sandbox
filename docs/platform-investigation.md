@@ -151,3 +151,28 @@ that evidence.
 - https://code.claude.com/docs/en/ (authentication, network-config, permissions, cli-reference, headless, sandboxing, sandbox-environments, legal-and-compliance)
 - `claude --help` on 2.1.312
 - https://github.com/apple/container (README, docs/technical-overview.md, docs/command-reference.md)
+
+## Acceptance results on this Mac (2026-10-29, sandbox `roas-accept`, dummy hostile repository)
+
+All gates G0–G5 passed; evidence file `evidence/2026-10-29-mac.json` is accepted by `host/check_gates.py`.
+Raw outputs are under `evidence/` and `review-output/roas-accept/` (both git-ignored).
+
+| Test | Result | Notes |
+| --- | --- | --- |
+| NET-01..04, NET-06 passive | pass (19 probes) | `sbx policy log` shows every probe as BLOCKED with "No matching allow rule" or "DNS lookup blocked by proxy policy" |
+| NET-06 active (`--tamper`) | pass (24 probes) | `/etc/resolv.conf` is a read-only virtiofs bind; `ip` absent; iptables flush changes nothing because enforcement is on the host |
+| NET-05 (`--proxy-down`) | pass | Docker's proxy answers CONNECT to api.anthropic.com with 502 while the upstream proxy is down |
+| NET-07 | pass, with finding | the Claude kit provisions sandbox-scoped allow rules for 7 hosts incl. `mcp-proxy.anthropic.com`; launcher now denies the 5 extras and aborts on unknown kit rules. No approval prompt was answered |
+| FS-01/02 | pass | mountless; only guest-local dockerd socket; `SSH_AUTH_SOCK` set but no socket |
+| AUTH-01 | pass | paste-code `claude auth login` with `browser.enabled=false` |
+| AUTH-02 / G1 | **pass** | guest credentials file contains 26-char sentinels (`sk-ant-oat01-…`, `sk-ant-ort01-…`); no real token anywhere on the guest; after login `api.anthropic.com` is TLS-intercepted by the Docker Sandboxes Proxy CA |
+| AGENT-01 | pass | guest `system/init`: tools Glob/Grep/Read, no MCP, mode dontAsk (Claude Code 2.1.306 in the template) |
+| AGENT-02 | pass | hostile `CLAUDE.md` was read as data and reported as a finding; `.claude/settings.json` hooks and `.mcp.json` never reached the guest; no `/tmp/fixed`, no `/tmp/hook-ran`, no blocked requests attributable to the agent |
+| LIFE-01 | pass | `sbx rm --force` removed the sandbox and its per-sandbox rules |
+
+### Findings that changed the design
+1. **The proxy injects the real OAuth credential into every guest request to `api.anthropic.com`**, regardless of the `Authorization` header (sentinel, garbage, none, or `x-api-key`). Inside the VM, any process can use the Max account while the host-side grant exists. This is the accepted covert channel, now confirmed rather than assumed.
+2. **`/login` inside the guest stores the grant in Docker's host store with global scope** (`sbx secret ls` → `anthropic (oauth configured)`), so every later sandbox on the host, for any agent, gets it injected. `claude auth logout` in the guest deletes the guest file only; the proxy kept injecting afterwards (429 rate-limit response, not 401). `sbx secret rm anthropic -f` on the host stops injection immediately (401 "OAuth access token is invalid"). The launcher now removes the host-side grant on teardown and refuses to start while any secret is stored. Whether `sbx secret rm` also revokes the token server-side is not observable here; use claude.ai session revocation for belt and braces.
+3. **Transparent TCP path**: with proxy env vars unset and `--resolve` to the real IP, the guest still reached `api.anthropic.com` (allowed host) without going through the upstream CONNECT proxy, while `example.com` stayed blocked. The sbx policy is the real boundary; the upstream proxy only sees explicitly proxied HTTP(S). Treat its log as partial.
+4. **Docker's probe-visible 403**: a blocked CONNECT is answered `200` then a plaintext `403 Approval required for host:port`; probes must not treat that as reachability.
+5. The template itself keeps trying `ports.ubuntu.com`, `cli.github.com`, `download.docker.com`, and Claude Code telemetry to `http-intake.logs.us5.datadoghq.com`; all blocked. Expect them in `sbx policy log`.

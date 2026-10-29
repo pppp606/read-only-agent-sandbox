@@ -12,15 +12,14 @@ microVMs (`sbx`) with Claude Code and a Claude Max subscription (OAuth, no API k
   claude.ai login endpoints are reachable.
 - The isolation layer does not depend on the model or the agent implementation.
 
-## Status: HARNESS COMPLETE, GATES OPEN
+## Status: ACCEPTANCE PASSED ON ONE MAC (2026-10-29)
 
-The host-side tooling is implemented and unit-tested, and the platform has been investigated on
-the target Mac (see [docs/platform-investigation.md](docs/platform-investigation.md)). The
-launcher refuses to start a real review until an evidence file shows every gate (G0–G5) passed
-on this machine. Two things still require the operator: `sbx login` (Docker account) and an
-interactive Claude login inside a disposable sandbox, after which
-`scripts/verify-oauth-isolation.sh` decides whether OAuth credentials are really kept out of
-the guest.
+All gates G0–G5 passed on the author's Apple Silicon Mac with `sbx` v0.50.1 (results and
+findings in [docs/platform-investigation.md](docs/platform-investigation.md)). The launcher
+refuses to start a real review unless a per-machine evidence file passes `host/check_gates.py`;
+every other machine must repeat the acceptance run. Guest-root OAuth isolation (G1) holds
+because Docker keeps the grant on the host and injects it at the proxy; that grant is global
+to the host, so the launcher removes it on teardown.
 
 Read in this order: [threat model](docs/threat-model.md), [architecture](docs/architecture.md),
 [platform investigation](docs/platform-investigation.md), [runbook](docs/runbook.md),

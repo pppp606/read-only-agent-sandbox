@@ -68,8 +68,13 @@ for target in example.com 1.1.1.1 registry.npmjs.org github.com; do
 done
 say "note: api.anthropic.com / claude.ai / platform.claude.com are allowed per sandbox by host/launch_review.sh, not globally."
 
-say "== Secrets stored for sandboxes (should be empty for this workflow) =="
-sbx secret ls 2>/dev/null || true
+say "== Secrets stored for sandboxes (must be empty before a session) =="
+if sbx secret ls --format json 2>/dev/null | grep -q '"secrets": \[\]'; then
+  say "ok   no stored secrets"
+else
+  sbx secret ls 2>/dev/null || true
+  bad "stored secrets present; a global anthropic OAuth grant is injected into every sandbox (sbx secret rm anthropic -f)"
+fi
 
 say "== Diagnose =="
 sbx diagnose 2>/dev/null | grep -E '✗|Authentication|network policy' || true

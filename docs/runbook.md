@@ -86,6 +86,8 @@ Treat the review as untrusted text produced from untrusted input.
 
 ## 6. Cleanup / restore
 ```sh
+sbx secret ls                      # must be empty; /login stores a GLOBAL host-side grant
+sbx secret rm anthropic -f         # if not, remove it (the launcher does this on teardown)
 sbx ls; sbx rm --force <leftovers>
 docker compose down
 ```
@@ -93,8 +95,10 @@ Restore the settings recorded in step 3 if this Mac is also used for other sandb
 
 ## Known limitations
 - Login is interactive by design (paste-code). There is no unattended first run.
-- Docker chains only HTTP(S) to the upstream proxy; the `sbx` policy is what blocks other TCP.
-  Proxy-down fail-closed therefore proves the HTTP(S) path only; NET-03 proves the rest.
+- Docker chains only explicitly proxied HTTP(S) to the upstream proxy; transparent TCP to an
+  allowed host bypasses it (observed). The `sbx` policy is the boundary; the upstream proxy log is partial.
+- The OAuth grant created by `/login` lives in Docker's host store with global scope and is injected
+  into every sandbox on the host until `sbx secret rm anthropic -f`. The launcher does this on teardown.
 - Secret filtering in the snapshot is heuristic. Inspect the snapshot before confidential use.
 - The guest can still send anything it can read to Anthropic through the allowed channel.
   That is inherent to a cloud-model review and is listed as a residual risk.

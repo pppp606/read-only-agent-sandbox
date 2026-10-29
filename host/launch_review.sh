@@ -62,6 +62,8 @@ fi
 
 # ---- 2. preflight -----------------------------------------------------------
 sh "$HERE/scripts/preflight.sh" || die "preflight failed"
+# A stale OAuth grant from a previous session would be injected into this sandbox too.
+sbx secret ls --format json 2>/dev/null | grep -q '"secrets": \[\]' || die "host-side sbx secrets exist; remove them first (sbx secret ls / sbx secret rm anthropic -f)"
 sbx ls 2>/dev/null | grep -q "^$NAME\b" && die "sandbox $NAME already exists"
 
 # ---- 3. snapshot (host side, outside both repositories) ---------------------
@@ -84,6 +86,12 @@ cleanup() {
   # Revoke the session's OAuth grant before the VM disappears (hygiene even with
   # Docker's host-side token handling; mandatory if the token turns out to be in-guest).
   sbx exec "$NAME" claude auth logout >/dev/null 2>&1 || log "warning: claude auth logout failed or not logged in"
+  # Observed on sbx 0.50.1: /login inside the guest stores the real OAuth grant in Docker's
+  # HOST store with GLOBAL scope, and the guest-side logout does not remove it. Every later
+  # sandbox on this host would get it injected. Remove it here so the session is disposable.
+  if sbx secret ls --format json 2>/dev/null | grep -q '"name": "anthropic"'; then
+    sbx secret rm anthropic -f >/dev/null 2>&1 && log "removed host-side anthropic OAuth credential" || log "WARNING: could not remove host-side anthropic credential; run: sbx secret rm anthropic -f"
+  fi
   log "destroying sandbox $NAME"
   sbx rm --force "$NAME" >/dev/null 2>&1 || true
   # Remove per-sandbox allow rules so they cannot be inherited by a future sandbox of the same name.
