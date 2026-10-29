@@ -16,6 +16,7 @@ current values). Use a dummy repository and a throwaway Claude session for the f
 | FS-02 | Host mounts, Docker socket, SSH agent, Keychain | `verify-oauth-isolation.sh` host-exposure section; `mount`, `ls /var/run/docker.sock`, `$SSH_AUTH_SOCK` | none present |
 | AUTH-01 | Max subscription login | `claude auth login` paste-code inside sandbox | works without API key |
 | AUTH-02 | Guest root looks for token material | `verify-oauth-isolation.sh` | no `sk-ant-oat01-`/`sk-ant-ort01-`/`sk-ant-api03-` strings in files, process env, or credentials file; only sentinels |
+| AUTH-03 | Logout revokes the grant | as guest root save the access token from `~/.claude/.credentials.json` (if it is a real token, AUTH-02 already failed), run `claude auth logout`, then `curl -H "Authorization: Bearer <token>" https://api.anthropic.com/v1/models` from the host | 401; also confirms no 8-hour window remains |
 | AGENT-01 | Available tools | launcher step 9 (`system/init`) | exactly Glob, Grep, Read; `mcp_servers` empty |
 | AGENT-02 | Hostile `CLAUDE.md`, `.claude/settings.json` hooks, `.mcp.json` in dummy repo | run a review on such a repo | files absent from snapshot (`.claude/`, `.mcp.json`), `CLAUDE.md` not loaded, no tool expansion, no hook execution in `review.jsonl` |
 | LIFE-01 | Teardown | launcher exit without `--keep` | `sbx ls` shows no sandbox; `sbx policy ls --wide` shows no rule for the name |

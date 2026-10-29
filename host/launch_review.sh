@@ -77,6 +77,9 @@ sbx create claude --name "$NAME" --skills off --no-progress
 cleanup() {
   rm -rf "$STAGE"
   if [ "$KEEP" = 1 ]; then log "keeping sandbox $NAME (--keep); remove with: sbx rm --force $NAME"; return; fi
+  # Revoke the session's OAuth grant before the VM disappears (hygiene even with
+  # Docker's host-side token handling; mandatory if the token turns out to be in-guest).
+  sbx exec "$NAME" claude auth logout >/dev/null 2>&1 || log "warning: claude auth logout failed or not logged in"
   log "destroying sandbox $NAME"
   sbx rm --force "$NAME" >/dev/null 2>&1 || true
   # Remove per-sandbox allow rules so they cannot be inherited by a future sandbox of the same name.
