@@ -19,14 +19,31 @@ run_in() { sbx exec -u root "$SANDBOX" sh -c "$1"; }
 # Docker's forward proxy answers a blocked CONNECT with 200 and then serves its own
 # plaintext 403 ("Approval required for host:port"). curl exits 0 on that, so a probe
 # counts as "allow" only if the command succeeds AND the output is not that block page.
+# The authoritative signal is the HOST-side policy log: a probe counts as denied when the
+# daemon logged a new BLOCKED entry for the target (4th arg, host:port), whatever the
+# guest saw. Body text is only a fast path.
+blocked_count() {
+  sbx policy log "$SANDBOX" --json 2>/dev/null | python3 -c '
+import json,sys
+want=sys.argv[1]; d=json.load(sys.stdin)
+print(sum(e.get("count",0) for e in d.get("blocked",[]) if e.get("host")==want))' "$1" 2>/dev/null || echo 0
+}
 probe() {
-  label="$1"; expected="$2"; cmd="$3"
+  label="$1"; expected="$2"; cmd="$3"; target="${4:-}"
+  before=0; [ -n "$target" ] && before=$(blocked_count "$target")
   out=$(run_in "$cmd 2>/dev/null; echo \"__rc=\$?\"" 2>/dev/null)
   rc=$(printf '%s' "$out" | sed -n 's/.*__rc=\([0-9]*\).*/\1/p' | tail -1)
   case "$out" in
     *"Approval required for"*|*"blocked by proxy policy"*|*"No matching allow rule"*) result=deny ;;
     *) if [ "${rc:-1}" = 0 ]; then result=allow; else result=deny; fi ;;
   esac
+  if [ "$result" = allow ] && [ -n "$target" ]; then
+    after=$(blocked_count "$target")
+    [ "$after" -gt "$before" ] && result="deny" && label="$label [host log]"
+  fi
+  if [ "$result" != "$expected" ]; then
+    echo "---- probe output ($label) ----" >&2; printf '%s\n' "$out" | head -c 400 >&2; echo >&2
+  fi
   if [ "$result" = "$expected" ]; then
     echo "PASS $label ($result)"
   else
@@ -53,16 +70,16 @@ if [ "$MODE" = "--proxy-down" ]; then
 fi
 
 echo "== NET-02: unapproved destinations =="
-probe "public HTTPS blocked" deny "$C https://example.com/"
-probe "public HTTP (port 80) blocked" deny "$C http://example.com/"
-probe "github.com blocked" deny "$C https://github.com/"
-probe "npm registry blocked" deny "$C https://registry.npmjs.org/"
-probe "DNS-over-HTTPS blocked" deny "$C https://cloudflare-dns.com/dns-query?name=example.com"
+probe "public HTTPS blocked" deny "$C https://example.com/" example.com:443
+probe "public HTTP (port 80) blocked" deny "$C http://example.com/" example.com:80
+probe "github.com blocked" deny "$C https://github.com/" github.com:443
+probe "npm registry blocked" deny "$C https://registry.npmjs.org/" registry.npmjs.org:443
+probe "DNS-over-HTTPS blocked" deny "$C https://cloudflare-dns.com/dns-query?name=example.com" cloudflare-dns.com:443
 
 echo "== NET-03: direct IP, IPv6, alternate ports =="
-probe "direct IPv4 literal blocked" deny "$C -k https://1.1.1.1/"
-probe "direct IPv6 literal blocked" deny "$C -k -6 'https://[2606:4700:4700::1111]/'"
-probe "alternate port 8443 blocked" deny "$C -k https://example.com:8443/"
+probe "direct IPv4 literal blocked" deny "$C -k https://1.1.1.1/" 1.1.1.1:443
+probe "direct IPv6 literal blocked" deny "$C -k -6 'https://[2606:4700:4700::1111]/'" "[2606:4700:4700::1111]:443"
+probe "alternate port 8443 blocked" deny "$C -k https://example.com:8443/" example.com:8443
 probe "SSH port blocked" deny "$C telnet://github.com:22"
 
 echo "== NET-04: UDP, local, LAN =="
@@ -91,9 +108,9 @@ if [ -n "$GW" ]; then
   probe "gateway :3128 (compose proxy) not directly reachable" deny "$C http://$GW:3128/"
   probe "gateway :22 blocked" deny "$C telnet://$GW:22"
 fi
-probe "host.docker.internal blocked" deny "$C http://host.docker.internal/"
-probe "RFC1918 LAN blocked" deny "$C http://192.168.0.1/"
-probe "link-local metadata blocked" deny "$C http://169.254.169.254/"
+probe "host.docker.internal blocked" deny "$C http://host.docker.internal/" host.docker.internal:80
+probe "RFC1918 LAN blocked" deny "$C http://192.168.0.1/" 192.168.0.1:80
+probe "link-local metadata blocked" deny "$C http://169.254.169.254/" 169.254.169.254:80
 
 echo "== NET-06 (passive): environment manipulation does not widen egress =="
 probe "no_proxy=* bypass blocked" deny "env no_proxy='*' NO_PROXY='*' $C https://example.com/"

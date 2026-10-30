@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Host-only snapshot builder. Never execute this from inside an agent sandbox."""
 import argparse
+import fnmatch
 import os
 from pathlib import Path
 import re
@@ -31,7 +32,11 @@ def git(root, *args):
 def allowed(path):
     return not (set(path.parts) & BLOCKED_PARTS or path.name in BLOCKED_NAMES or path.suffix.lower() in BLOCKED_SUFFIXES or path.name.startswith(".env"))
 
-def prepare(root, output, history_count):
+def excluded(relative, patterns):
+    name = relative.as_posix()
+    return any(fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(relative.name, pat) for pat in patterns)
+
+def prepare(root, output, history_count, exclude=()):
     root = root.resolve(strict=True)
     # Resolve the parent (which must exist) so symlinked temp dirs such as
     # macOS /var -> /private/var compare correctly against the resolved root.
@@ -44,11 +49,15 @@ def prepare(root, output, history_count):
         raise ValueError("Expected a Git repository")
     paths = git(root, "ls-files", "-z").split(b"\0")
     staged = []
+    skipped = []
     total = 0
     for raw in filter(None, paths):
         name = os.fsdecode(raw)
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts or not allowed(relative):
+            continue
+        if excluded(relative, exclude):
+            skipped.append(name)
             continue
         source = root / relative
         if source.is_symlink() or not source.is_file():
@@ -76,6 +85,7 @@ def prepare(root, output, history_count):
         (stage / "REVIEW_SCOPE.txt").write_text(
             "Untrusted review input. History contains commit metadata only. "
             "No tests or project code were executed.\n"
+            + ("Operator-excluded paths (not supplied): " + ", ".join(skipped) + "\n" if skipped else "")
         )
         # copytree rejects an existing destination and avoids symlinks.
         shutil.copytree(stage, output)
@@ -86,10 +96,12 @@ def main():
     p.add_argument("repository", type=Path)
     p.add_argument("destination", type=Path)
     p.add_argument("--history-count", type=int, default=50)
+    p.add_argument("--exclude", action="append", default=[], metavar="GLOB",
+                   help="skip tracked paths matching this glob (repeatable); recorded in REVIEW_SCOPE.txt")
     args = p.parse_args()
     if not 0 <= args.history_count <= 500:
         p.error("history-count must be between 0 and 500")
-    print(f"Prepared {prepare(args.repository, args.destination, args.history_count)} tracked files at {args.destination}")
+    print(f"Prepared {prepare(args.repository, args.destination, args.history_count, args.exclude)} tracked files at {args.destination}")
     print("WARNING: automatic secret filtering is incomplete. Manually inspect before using confidential input.")
 
 if __name__ == "__main__":

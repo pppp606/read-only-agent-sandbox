@@ -57,6 +57,19 @@ class SnapshotTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             snapshot.prepare(self.root, Path(self.temp.name) / "out", 1)
 
+    def test_operator_exclude_skips_secret_fixture(self):
+        (self.root / "main.py").write_text("ok\n")
+        (self.root / "fixtures").mkdir()
+        (self.root / "fixtures" / "sample.json").write_text('{"k": "AKIAABCDEFGHIJKLMNOP"}')
+        self.commit()
+        with self.assertRaises(ValueError):
+            snapshot.prepare(self.root, Path(self.temp.name) / "out1", 1)
+        out = Path(self.temp.name) / "out2"
+        snapshot.prepare(self.root, out, 1, exclude=["fixtures/*"])
+        self.assertTrue((out / "source/main.py").exists())
+        self.assertFalse((out / "source/fixtures/sample.json").exists())
+        self.assertIn("fixtures/sample.json", (out / "REVIEW_SCOPE.txt").read_text())
+
     def test_detects_known_secret_marker(self):
         (self.root / "bad.txt").write_text("-----BEGIN OPENSSH PRIVATE KEY-----")
         self.commit()

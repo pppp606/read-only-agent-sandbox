@@ -4,8 +4,12 @@
 # compose egress proxy running, and a gate evidence file that passes check_gates.
 #
 #   host/launch_review.sh --repo /path/to/repo --evidence evidence/2026-10-29.json [--name NAME]
-#        [--history-count N] [--prompt "text"] [--out review-output/]
+#        [--history-count N] [--prompt "text"] [--out review-output/] [--exclude GLOB ...]
 #   host/launch_review.sh --repo /path/to/dummy-repo --unsafe-probe-mode   # for acceptance testing only
+#   Two-phase use (login needs a TTY the operator owns):
+#   host/launch_review.sh --repo ... --evidence ... --prepare-only        # steps 1-7, keeps the sandbox
+#   sbx exec -it <name> claude auth login                                 # operator, in a terminal
+#   host/launch_review.sh --evidence ... --resume <name> [--prompt ...]   # steps 8-11, then teardown
 #
 # Flow: gates -> preflight -> snapshot -> create mountless sandbox -> per-sandbox
 # allow rules -> copy snapshot in -> egress probes -> login -> AUTH-02 -> tool
@@ -14,7 +18,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 REPO=""; EVIDENCE=""; NAME="roas-$(date +%Y%m%d-%H%M%S)"; HISTORY=50; PROMPT=""; OUT="$HERE/review-output"
-PROBE_MODE=0; KEEP=0
+PROBE_MODE=0; KEEP=0; PREPARE_ONLY=0; RESUME=""; EXCLUDES=()
 ALLOW_HOSTS="api.anthropic.com:443,claude.ai:443,platform.claude.com:443"
 # The Docker claude kit provisions its own sandbox-scoped allow rules (observed on sbx 0.50.1:
 # api.anthropic.com, bridge.claudeusercontent.com, claude.com, code.claude.com, downloads.claude.ai,
@@ -33,11 +37,14 @@ while [ $# -gt 0 ]; do
     --out) OUT="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     --unsafe-probe-mode) PROBE_MODE=1; shift ;;
+    --prepare-only) PREPARE_ONLY=1; shift ;;
+    --exclude) EXCLUDES+=(--exclude "$2"); shift 2 ;;
+    --resume) RESUME="$2"; NAME="$2"; shift 2 ;;
     -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
-[ -n "$REPO" ] || { echo "--repo is required" >&2; exit 2; }
+[ -n "$REPO" ] || [ -n "$RESUME" ] || { echo "--repo is required (or --resume NAME)" >&2; exit 2; }
 # The grant watchdog (scripts/grant-watchdog.sh) recognises review sandboxes by this prefix.
 case "$NAME" in roas-*) ;; *) echo "--name must start with roas- (watchdog prefix)" >&2; exit 2 ;; esac
 
@@ -54,7 +61,7 @@ if [ "$PROBE_MODE" = 1 ]; then
 !!! UNSAFE PROBE MODE: gate evidence is NOT checked. Use ONLY with a dummy repository
 !!! and a throwaway Claude account/session. Output of this run is acceptance evidence, not a review.
 EOF
-  case "$(cd "$REPO" && pwd)" in
+  [ -n "$RESUME" ] || case "$(cd "$REPO" && pwd)" in
     "$HERE"|"$HERE"/*) die "never point the sandbox at this repository" ;;
   esac
 else
@@ -65,28 +72,16 @@ fi
 # ---- 2. preflight -----------------------------------------------------------
 sh "$HERE/scripts/preflight.sh" || die "preflight failed"
 # A stale OAuth grant from a previous session would be injected into this sandbox too.
-sbx secret ls --format json 2>/dev/null | grep -q '"secrets": \[\]' || die "host-side sbx secrets exist; remove them first (sbx secret ls / sbx secret rm anthropic -f)"
-sbx ls 2>/dev/null | grep -q "^$NAME\b" && die "sandbox $NAME already exists"
-
-# ---- 3. snapshot (host side, outside both repositories) ---------------------
-STAGE=$(mktemp -d "${TMPDIR:-/tmp}/roas-snapshot-XXXXXX")
-SNAP="$STAGE/snapshot"
-trap 'rm -rf "$STAGE"' EXIT
-python3 "$HERE/host/prepare_snapshot.py" "$REPO" "$SNAP" --history-count "$HISTORY"
-cp "$HERE/prompts/reviewer.md" "$SNAP/REVIEW_INSTRUCTIONS.md"
-# Belt and braces: the snapshot must contain no agent extension points.
-if find "$SNAP" \( -name .mcp.json -o -name .claude -o -name settings.json -path '*/.claude/*' \) | grep -q .; then
-  die "snapshot contains agent extension files"
+if [ -n "$RESUME" ]; then
+  sbx ls -q 2>/dev/null | grep -qx "$NAME" || die "sandbox $NAME does not exist; run --prepare-only first"
+else
+  sbx secret ls --format json 2>/dev/null | grep -q '"secrets": \[\]' || die "host-side sbx secrets exist; remove them first (sbx secret ls / sbx secret rm anthropic -f)"
+  sbx ls -q 2>/dev/null | grep -qx "$NAME" && die "sandbox $NAME already exists"
 fi
 
-# ---- 4. mountless sandbox ---------------------------------------------------
-log "creating mountless sandbox $NAME (no host workspace, no shared skills)"
-sbx create claude --name "$NAME" --skills off --no-progress
 cleanup() {
-  rm -rf "$STAGE"
+  [ -n "${STAGE:-}" ] && rm -rf "$STAGE"
   if [ "$KEEP" = 1 ]; then log "keeping sandbox $NAME (--keep); remove with: sbx rm --force $NAME"; return; fi
-  # Revoke the session's OAuth grant before the VM disappears (hygiene even with
-  # Docker's host-side token handling; mandatory if the token turns out to be in-guest).
   sbx exec "$NAME" claude auth logout >/dev/null 2>&1 || log "warning: claude auth logout failed or not logged in"
   # Observed on sbx 0.50.1: /login inside the guest stores the real OAuth grant in Docker's
   # HOST store with GLOBAL scope, and the guest-side logout does not remove it. Every later
@@ -96,9 +91,25 @@ cleanup() {
   fi
   log "destroying sandbox $NAME"
   sbx rm --force "$NAME" >/dev/null 2>&1 || true
-  # Remove per-sandbox allow rules so they cannot be inherited by a future sandbox of the same name.
+  # Remove per-sandbox rules so they cannot be inherited by a future sandbox of the same name.
   for h in ${ALLOW_HOSTS//,/ } ${DENY_HOSTS//,/ }; do sbx policy rm network -f --sandbox "$NAME" --resource "$h" >/dev/null 2>&1 || true; done
 }
+
+if [ -z "$RESUME" ]; then
+# ---- 3. snapshot (host side, outside both repositories) ---------------------
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/roas-snapshot-XXXXXX")
+SNAP="$STAGE/snapshot"
+trap 'rm -rf "$STAGE"' EXIT
+python3 "$HERE/host/prepare_snapshot.py" "$REPO" "$SNAP" --history-count "$HISTORY" ${EXCLUDES[@]+"${EXCLUDES[@]}"}
+cp "$HERE/prompts/reviewer.md" "$SNAP/REVIEW_INSTRUCTIONS.md"
+# Belt and braces: the snapshot must contain no agent extension points.
+if find "$SNAP" \( -name .mcp.json -o -name .claude -o -name settings.json -path '*/.claude/*' \) | grep -q .; then
+  die "snapshot contains agent extension files"
+fi
+
+# ---- 4. mountless sandbox ---------------------------------------------------
+log "creating mountless sandbox $NAME (no host workspace, no shared skills)"
+sbx create claude --name "$NAME" --skills off --no-progress
 trap cleanup EXIT
 
 # ---- 5. per-sandbox network allow rules on top of the global deny-all -------
@@ -120,6 +131,19 @@ sbx exec -u root "$NAME" sh -c "chown -R agent:agent $GUEST_REVIEW 2>/dev/null |
 
 # ---- 7. egress probes as guest root -----------------------------------------
 SANDBOX="$NAME" sh "$HERE/scripts/test-egress.sh" || die "egress probes failed"
+if [ "$PREPARE_ONLY" = 1 ]; then
+  KEEP=1
+  log "prepared. Sandbox $NAME is waiting for login. In a terminal of your own run:"
+  log "    sbx exec -it $NAME claude auth login"
+  log "then continue with:"
+  log "    $0 --evidence ${EVIDENCE:-<evidence.json>} --resume $NAME [--prompt \"...\"]"
+  log "(the grant watchdog does not touch the credential while $NAME exists)"
+  exit 0
+fi
+else
+  trap cleanup EXIT
+  log "resuming on existing sandbox $NAME"
+fi
 
 # ---- 8. login (interactive, paste-code flow) + AUTH-02 ----------------------
 # browser.enabled is false, so the guest cannot open the host browser; the operator
