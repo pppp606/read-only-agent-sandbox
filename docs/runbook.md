@@ -38,7 +38,13 @@ sbx settings set proxy.sandbox http://127.0.0.1:3128
 sbx settings unset no_proxy.sandbox 2>/dev/null || true
 sbx daemon restart                              # proxy.sandbox applies to new sandboxes after restart
 sh scripts/preflight.sh                         # must print "Preflight OK"
+sh scripts/install-grant-watchdog.sh install 60  # launchd agent: removes a stale global OAuth grant
 ```
+The watchdog (`scripts/grant-watchdog.sh`) runs every 60 s under launchd. When no sandbox named
+`roas-*` exists and `sbx secret ls` still shows an `anthropic` entry, it runs
+`sbx secret rm anthropic -f` and logs to `~/Library/Logs/roas-grant-watchdog.log`. It covers the
+exit paths the launcher's trap cannot (kill -9, closed terminal, host crash). The launcher
+therefore requires `--name` to start with `roas-`. `status`, `run` and `uninstall` are available.
 Do **not** add global allow rules. The launcher adds `api.anthropic.com:443,claude.ai:443,platform.claude.com:443`
 scoped to the one sandbox it creates and removes them on exit. If `sbx` ever prompts to approve a
 network destination, answer no; a review that needs more egress is out of scope (NET-07).

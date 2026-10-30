@@ -176,3 +176,8 @@ Raw outputs are under `evidence/` and `review-output/roas-accept/` (both git-ign
 3. **Transparent TCP path**: with proxy env vars unset and `--resolve` to the real IP, the guest still reached `api.anthropic.com` (allowed host) without going through the upstream CONNECT proxy, while `example.com` stayed blocked. The sbx policy is the real boundary; the upstream proxy only sees explicitly proxied HTTP(S). Treat its log as partial.
 4. **Docker's probe-visible 403**: a blocked CONNECT is answered `200` then a plaintext `403 Approval required for host:port`; probes must not treat that as reachability.
 5. The template itself keeps trying `ports.ubuntu.com`, `cli.github.com`, `download.docker.com`, and Claude Code telemetry to `http-intake.logs.us5.datadoghq.com`; all blocked. Expect them in `sbx policy log`.
+6. `sbx secret set` prints "Applied global secret to existing sandboxes": a global grant is pushed into
+   running sandboxes immediately, not only new ones. The launchd watchdog
+   (`scripts/install-grant-watchdog.sh`, 60 s) removes a stale grant whenever no `roas-*` sandbox exists;
+   tested 2026-10-30 for remove / keep-while-in-use / remove-after-teardown, including Keychain access
+   from a launchd context.

@@ -35,6 +35,7 @@ Read in this order: [threat model](docs/threat-model.md), [architecture](docs/ar
 | `scripts/preflight.sh` | verifies host-wide `sbx` settings and policy posture |
 | `scripts/test-egress.sh` | guest-root egress probes (standard, `--tamper`, `--proxy-down`) |
 | `scripts/verify-oauth-isolation.sh` | guest-root sweep for subscription tokens (AUTH-02 / G1) |
+| `scripts/grant-watchdog.sh`, `scripts/install-grant-watchdog.sh` | launchd safety net that removes the global host-side OAuth grant once no `roas-*` sandbox exists |
 | `prompts/reviewer.md` | review instructions appended to the system prompt |
 | `tests/` | unit tests for the host tools (run in CI) |
 

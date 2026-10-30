@@ -38,6 +38,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$REPO" ] || { echo "--repo is required" >&2; exit 2; }
+# The grant watchdog (scripts/grant-watchdog.sh) recognises review sandboxes by this prefix.
+case "$NAME" in roas-*) ;; *) echo "--name must start with roas- (watchdog prefix)" >&2; exit 2 ;; esac
 
 log() { printf '[launch] %s\n' "$*"; }
 die() { printf '[launch] ABORT: %s\n' "$*" >&2; exit 1; }
